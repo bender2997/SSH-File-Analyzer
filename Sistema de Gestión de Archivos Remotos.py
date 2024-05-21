@@ -260,7 +260,7 @@ def mostrar_ocultar_nombre_archivo_excel():
 # ENTORNO VISUAL
 
 root = tk.Tk()
-root.title("необнаружимый шпионский код")
+root.title("Sistema de Gestión de Archivos Remotos")
 
 # Configuración de la interfaz de usuario
 for i in range(10):
