@@ -178,16 +178,16 @@ def iniciar_operacion():
     """
     Función principal que inicia la operación de conexión SSH, listado de archivos y guardado en Excel.
     """
-    host = "10.10.163.163"
-    username = "prueba"
-    use_private_key = 's'
-    private_key_path = r"C:/Users/LENOVO/Desktop/ANALIZADOR/bkusr1_openssh.pub"
-    password = "prueba"
-    port = 22
-    carpeta = "/home/prueba/Prueba_SSH"
-    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
-    nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")
-    sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()
+    host = "IP HOST"
+    username = "user"
+    use_private_key = 's'        #En caso de no utilizar, ingresar 'n'
+    private_key_path = r"C:/Users/LENOVO/Desktop/ANALIZADOR/clave_openssh.pub"    #Ruta de ejemplo
+    password = "admin"                   #ingresar contraseña en caso de necesitarla
+    port = 22            
+    carpeta = "/home/prueba/Prueba_SSH"        #Carpeta del servidor remoto a analizar
+    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"        #Ingresar nombre del archivo donde se guardara
+    nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")        #Nombre de la hoja del excel donde se guardaran los datos
+    sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()        #linux/windows
     
     ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port)
     if ssh_client:
