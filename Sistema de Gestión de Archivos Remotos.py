@@ -3,15 +3,12 @@ import stat
 import paramiko
 from openpyxl import load_workbook, Workbook
 from openpyxl.utils import get_column_letter
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 def listar_archivos_remotos_linux(sftp_client, carpeta):
     """
     Lista los archivos en una carpeta remota en un sistema Linux a través de una conexión SFTP.
-    
-    :param sftp_client: Cliente SFTP activo para la conexión SSH.
-    :param carpeta: Ruta de la carpeta remota a listar.
-    :return: Lista de tuplas con información de archivos (nombre, extensión, fecha de modificación, fecha de acceso, ruta del padre).
     """
     archivos = []
     try:
@@ -36,10 +33,6 @@ def listar_archivos_remotos_linux(sftp_client, carpeta):
 def listar_archivos_remotos_windows(sftp_client, carpeta):
     """
     Lista los archivos en una carpeta remota en un sistema Windows a través de una conexión SFTP.
-    
-    :param sftp_client: Cliente SFTP activo para la conexión SSH.
-    :param carpeta: Ruta de la carpeta remota a listar.
-    :return: Lista de tuplas con información de archivos (nombre, extensión, fecha de modificación, fecha de acceso, ruta del padre).
     """
     archivos = []
     try:
@@ -64,11 +57,6 @@ def listar_archivos_remotos_windows(sftp_client, carpeta):
 def agregar_hoja_excel(libro_excel, nombre_hoja):
     """
     Agrega una nueva hoja a un libro de Excel si el nombre de la hoja no está ya en uso.
-    Si el nombre ya existe, solicita al usuario un nuevo nombre.
-
-    :param libro_excel: Objeto Workbook de openpyxl.
-    :param nombre_hoja: Nombre deseado para la nueva hoja.
-    :return: Nombre de la hoja que fue creada.
     """
     nombre_hoja = limpiar_nombre(nombre_hoja)
     if nombre_hoja in libro_excel.sheetnames:
@@ -82,8 +70,6 @@ def agregar_hoja_excel(libro_excel, nombre_hoja):
 def ajustar_ancho_columnas(hoja):
     """
     Ajusta el ancho de las columnas de una hoja de Excel para que el contenido se ajuste automáticamente.
-
-    :param hoja: Objeto Worksheet de openpyxl.
     """
     for col in hoja.columns:
         max_length = 0
@@ -100,11 +86,6 @@ def ajustar_ancho_columnas(hoja):
 def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
     """
     Guarda la lista de archivos en un archivo de Excel. Crea un nuevo archivo si no existe.
-    También crea una nueva hoja si se proporciona un nombre para ella.
-
-    :param archivos: Lista de tuplas con información de archivos.
-    :param nombre_archivo: Nombre del archivo Excel donde se guardarán los datos.
-    :param nombre_hoja_nueva: Nombre de la hoja donde se guardarán los datos (opcional).
     """
     if not nombre_archivo:
         nombre_archivo = "Bitacora.xlsx"
@@ -133,9 +114,6 @@ def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
 def limpiar_nombre(nombre):
     """
     Limpia el nombre de una hoja de Excel eliminando caracteres no válidos.
-
-    :param nombre: Nombre original de la hoja.
-    :return: Nombre de la hoja limpio y truncado a 30 caracteres.
     """
     caracteres_no_validos = ['\\', '/', '*', '[', ']', ':', '?']
     for caracter in caracteres_no_validos:
@@ -145,14 +123,6 @@ def limpiar_nombre(nombre):
 def establecer_conexion(host, username, use_private_key, private_key_path=None, password=None, port=22):
     """
     Establece una conexión SSH al servidor especificado utilizando autenticación con clave privada o contraseña.
-
-    :param host: Dirección del servidor SSH.
-    :param username: Nombre de usuario para la autenticación.
-    :param use_private_key: Booleano que indica si se debe usar una clave privada para la autenticación.
-    :param private_key_path: Ruta al archivo de clave privada (si se usa autenticación con clave privada).
-    :param password: Contraseña para la autenticación (si no se usa clave privada).
-    :param port: Puerto del servidor SSH (por defecto es 22).
-    :return: Cliente SSH conectado o None si no se pudo establecer la conexión.
     """
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -174,21 +144,10 @@ def establecer_conexion(host, username, use_private_key, private_key_path=None, 
         print(f"Error inesperado al establecer la conexión: {e}")
         return None
 
-def iniciar_operacion():
+def iniciar_operacion(host, username, use_private_key, private_key_path, password, port, carpeta, nombre_archivo_excel, nombre_hoja_nueva, sistema_operativo):
     """
     Función principal que inicia la operación de conexión SSH, listado de archivos y guardado en Excel.
     """
-    host = "IP HOST"
-    username = "user"
-    use_private_key = 's'        #En caso de no utilizar, ingresar 'n'
-    private_key_path = r"C:/Users/LENOVO/Desktop/ANALIZADOR/clave_openssh.pub"    #Ruta de ejemplo
-    password = "admin"                   #ingresar contraseña en caso de necesitarla
-    port = 22            
-    carpeta = "/home/prueba/Prueba_SSH"        #Carpeta del servidor remoto a analizar
-    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"        #Ingresar nombre del archivo donde se guardara
-    nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")        #Nombre de la hoja del excel donde se guardaran los datos
-    sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()        #linux/windows
-    
     ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port)
     if ssh_client:
         try:
@@ -204,8 +163,51 @@ def iniciar_operacion():
         except Exception as e:
             print(f"Error al procesar la operación: {e}")
     else:
-        
         print("No se pudo establecer la conexión SSH.")
 
+def esperar_hasta_hora_objetivo(hora_objetivo):
+    """
+    Espera hasta la hora objetivo para ejecutar la tarea.
+    """
+    ahora = datetime.now()
+    objetivo = ahora.replace(hour=hora_objetivo.hour, minute=hora_objetivo.minute, second=0, microsecond=0)
+    
+    if ahora > objetivo:
+        objetivo = objetivo + timedelta(days=1)
+    
+    tiempo_espera = (objetivo - ahora).total_seconds()
+    print(f"Esperando {tiempo_espera / 60:.2f} minutos para ejecutar la tarea a las {objetivo.time()}.")
+    time.sleep(tiempo_espera)
+
+def main():
+    # Recolectar información de conexión y configuración del archivo
+    host = input("Ingrese la dirección IP o hostname del servidor: ")
+    username = input("Ingrese el nombre de usuario para la conexión SSH: ")
+    use_private_key = input("¿Desea usar una clave privada para la autenticación? (s/n): ").strip().lower() == 's'
+    private_key_path = input("Ingrese la ruta al archivo de clave privada (deje vacío si no usa clave privada): ") or None
+    password = input("Ingrese la contraseña para la conexión SSH (deje vacío si usa clave privada): ") or None
+    port = int(input("Ingrese el puerto del servidor SSH (por defecto 22): ") or 22)
+    carpeta = input("Ingrese la carpeta remota a analizar: ")
+    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+    nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")
+    sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()
+
+    opcion = input("¿Desea ejecutar la operación ahora (1) o en una hora específica (2)? Ingrese 1 o 2: ").strip()
+    
+    if opcion == '1':
+        iniciar_operacion(host, username, use_private_key, private_key_path, password, port, carpeta, nombre_archivo_excel, nombre_hoja_nueva, sistema_operativo)
+    elif opcion == '2':
+        hora_objetivo = input("Ingrese la hora objetivo en formato HH:MM (por ejemplo, 22:00): ").strip()
+        try:
+            hora_objetivo = datetime.strptime(hora_objetivo, "%H:%M").time()
+            print(f"Esperando hasta las {hora_objetivo}.")
+            esperar_hasta_hora_objetivo(hora_objetivo)
+            iniciar_operacion(host, username, use_private_key, private_key_path, password, port, carpeta, nombre_archivo_excel, nombre_hoja_nueva, sistema_operativo)
+        except ValueError:
+            print("El formato de la hora no es válido. Asegúrese de usar HH:MM.")
+    else:
+        print("Opción no válida. Por favor, ingrese 1 o 2.")
+
 if __name__ == "__main__":
-    iniciar_operacion()
+    main()
+
