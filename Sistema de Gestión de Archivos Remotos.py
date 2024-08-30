@@ -5,11 +5,9 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
 import time
+import pickle
 
 def listar_archivos_remotos_linux(sftp_client, carpeta):
-    """
-    Lista los archivos en una carpeta remota en un sistema Linux a través de una conexión SFTP.
-    """
     archivos = []
     try:
         for entry in sftp_client.listdir_attr(carpeta):
@@ -31,9 +29,6 @@ def listar_archivos_remotos_linux(sftp_client, carpeta):
     return archivos
 
 def listar_archivos_remotos_windows(sftp_client, carpeta):
-    """
-    Lista los archivos en una carpeta remota en un sistema Windows a través de una conexión SFTP.
-    """
     archivos = []
     try:
         for entry in sftp_client.listdir_attr(carpeta):
@@ -55,9 +50,6 @@ def listar_archivos_remotos_windows(sftp_client, carpeta):
     return archivos
 
 def agregar_hoja_excel(libro_excel, nombre_hoja):
-    """
-    Agrega una nueva hoja a un libro de Excel si el nombre de la hoja no está ya en uso.
-    """
     nombre_hoja = limpiar_nombre(nombre_hoja)
     if nombre_hoja in libro_excel.sheetnames:
         print(f"La hoja '{nombre_hoja}' ya existe en el archivo de Excel. Es necesario cambiar el nombre.")
@@ -68,9 +60,6 @@ def agregar_hoja_excel(libro_excel, nombre_hoja):
         return nombre_hoja
 
 def ajustar_ancho_columnas(hoja):
-    """
-    Ajusta el ancho de las columnas de una hoja de Excel para que el contenido se ajuste automáticamente.
-    """
     for col in hoja.columns:
         max_length = 0
         column = get_column_letter(col[0].column)
@@ -84,9 +73,6 @@ def ajustar_ancho_columnas(hoja):
         hoja.column_dimensions[column].width = adjusted_width
 
 def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
-    """
-    Guarda la lista de archivos en un archivo de Excel. Crea un nuevo archivo si no existe.
-    """
     if not nombre_archivo:
         nombre_archivo = "Bitacora.xlsx"
     if not nombre_archivo.lower().endswith('.xlsx'):
@@ -112,18 +98,12 @@ def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
         print(f"Error de permisos al guardar el archivo: {nombre_archivo} - {e}")
 
 def limpiar_nombre(nombre):
-    """
-    Limpia el nombre de una hoja de Excel eliminando caracteres no válidos.
-    """
     caracteres_no_validos = ['\\', '/', '*', '[', ']', ':', '?']
     for caracter in caracteres_no_validos:
         nombre = nombre.replace(caracter, '_')
     return nombre[:30]
 
 def establecer_conexion(host, username, use_private_key, private_key_path=None, password=None, port=22):
-    """
-    Establece una conexión SSH al servidor especificado utilizando autenticación con clave privada o contraseña.
-    """
     ssh_client = paramiko.SSHClient()
     ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -144,31 +124,77 @@ def establecer_conexion(host, username, use_private_key, private_key_path=None, 
         print(f"Error inesperado al establecer la conexión: {e}")
         return None
 
-def iniciar_operacion(host, username, use_private_key, private_key_path, password, port, carpeta, nombre_archivo_excel, nombre_hoja_nueva, sistema_operativo):
-    """
-    Función principal que inicia la operación de conexión SSH, listado de archivos y guardado en Excel.
-    """
-    ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port)
-    if ssh_client:
-        try:
-            if sistema_operativo == "linux":
-                archivos = listar_archivos_remotos_linux(ssh_client.open_sftp(), carpeta)
-            elif sistema_operativo == "windows":
-                archivos = listar_archivos_remotos_windows(ssh_client.open_sftp(), carpeta)
-            else:
-                print("Sistema operativo no soportado.")
-                return
-            ssh_client.close()
-            guardar_en_excel(archivos, nombre_archivo_excel, nombre_hoja_nueva)
-        except Exception as e:
-            print(f"Error al procesar la operación: {e}")
+def guardar_progreso(progreso, nombre_archivo="progreso.pkl"):
+    with open(nombre_archivo, 'wb') as archivo:
+        pickle.dump(progreso, archivo)
+    print(f"Progreso guardado en {nombre_archivo}.")
+
+def cargar_progreso(nombre_archivo="progreso.pkl"):
+    if os.path.exists(nombre_archivo):
+        with open(nombre_archivo, 'rb') as archivo:
+            return pickle.load(archivo)
+    return None
+
+def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None, continuar_progreso=False):
+    progreso = cargar_progreso() if continuar_progreso else {}
+    
+    # Convertir hora_final en un objeto datetime solo si se proporciona
+    if hora_final:
+        hora_final_dt = datetime.combine(datetime.today(), hora_final)
     else:
-        print("No se pudo establecer la conexión SSH.")
+        hora_final_dt = None
+
+    # Establecer hora_fin como una fecha y hora completa (por defecto 5 AM del siguiente día)
+    hora_fin = datetime.now().replace(hour=5, minute=0, second=0, microsecond=0)
+    if datetime.now() >= hora_fin:
+        hora_fin += timedelta(days=1)
+
+    for conexion in conexiones:
+        host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo = conexion
+        ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port)
+        if ssh_client:
+            try:
+                sftp_client = ssh_client.open_sftp()
+                for carpeta, nombre_hoja_nueva in rutas:
+                    progreso_clave = f"{host}_{carpeta}"
+                    if progreso_clave in progreso:
+                        print(f"Saltando carpeta {carpeta} en {host} ya que se completó en una ejecución previa.")
+                        continue
+
+                    ahora = datetime.now()
+
+                    # Comprobar si se ha alcanzado la hora límite
+                    if ahora >= hora_fin:
+                        print("Se alcanzó la hora límite. Pausando la operación.")
+                        guardar_progreso(progreso)
+                        return
+                    
+                    # Comprobar si se ha alcanzado la hora final (solo si se ha proporcionado)
+                    if hora_final_dt and ahora >= hora_final_dt:
+                        print("Se alcanzó la hora final. Pausando la operación.")
+                        guardar_progreso(progreso)
+                        return
+                    
+                    if sistema_operativo == "linux":
+                        archivos = listar_archivos_remotos_linux(sftp_client, carpeta)
+                    elif sistema_operativo == "windows":
+                        archivos = listar_archivos_remotos_windows(sftp_client, carpeta)
+                    else:
+                        print("Sistema operativo no soportado.")
+                        continue
+                    
+                    guardar_en_excel(archivos, nombre_archivo_excel, nombre_hoja_nueva)
+                    progreso[progreso_clave] = True
+            except Exception as e:
+                print(f"Error al procesar la operación en {host}: {e}")
+            finally:
+                ssh_client.close()
+        else:
+            print(f"No se pudo establecer la conexión SSH con {host}.")
+
+    guardar_progreso(progreso)
 
 def esperar_hasta_hora_objetivo(hora_objetivo):
-    """
-    Espera hasta la hora objetivo para ejecutar la tarea.
-    """
     ahora = datetime.now()
     objetivo = ahora.replace(hour=hora_objetivo.hour, minute=hora_objetivo.minute, second=0, microsecond=0)
     
@@ -179,35 +205,124 @@ def esperar_hasta_hora_objetivo(hora_objetivo):
     print(f"Esperando {tiempo_espera / 60:.2f} minutos para ejecutar la tarea a las {objetivo.time()}.")
     time.sleep(tiempo_espera)
 
-def main():
-    # Recolectar información de conexión y configuración del archivo
-    host = input("Ingrese la dirección IP o hostname del servidor: ")
-    username = input("Ingrese el nombre de usuario para la conexión SSH: ")
-    use_private_key = input("¿Desea usar una clave privada para la autenticación? (s/n): ").strip().lower() == 's'
-    private_key_path = input("Ingrese la ruta al archivo de clave privada (deje vacío si no usa clave privada): ") or None
-    password = input("Ingrese la contraseña para la conexión SSH (deje vacío si usa clave privada): ") or None
-    port = int(input("Ingrese el puerto del servidor SSH (por defecto 22): ") or 22)
-    carpeta = input("Ingrese la carpeta remota a analizar: ")
-    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
-    nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")
-    sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()
+def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None, continuar_progreso=False):
+    progreso = cargar_progreso() if continuar_progreso else {}
+    for conexion in conexiones:
+        host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo = conexion
+        ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port)
+        if ssh_client:
+            try:
+                sftp_client = ssh_client.open_sftp()
+                for carpeta, nombre_hoja_nueva in rutas:
+                    progreso_clave = f"{host}_{carpeta}"
+                    if progreso_clave in progreso:
+                        print(f"Saltando carpeta {carpeta} en {host} ya que se completó en una ejecución previa.")
+                        continue
 
+                    ahora = datetime.now()
+
+                    # Comprobar si se ha alcanzado la hora límite
+                    if hora_final and ahora.time() >= hora_final:
+                        print("Se alcanzó la hora final. Pausando la operación.")
+                        guardar_progreso(progreso)
+                        return
+                    
+                    # (El resto del código sigue igual)
+                    
+                    if sistema_operativo == "linux":
+                        archivos = listar_archivos_remotos_linux(sftp_client, carpeta)
+                    elif sistema_operativo == "windows":
+                        archivos = listar_archivos_remotos_windows(sftp_client, carpeta)
+                    else:
+                        print("Sistema operativo no soportado.")
+                        continue
+                    
+                    guardar_en_excel(archivos, nombre_archivo_excel, nombre_hoja_nueva)
+                    progreso[progreso_clave] = True
+            except Exception as e:
+                print(f"Error al procesar la operación en {host}: {e}")
+            finally:
+                ssh_client.close()
+        else:
+            print(f"No se pudo establecer la conexión SSH con {host}.")
+
+    guardar_progreso(progreso)
+    
+
+def main():
+    conexiones = []
+    while True:
+        host = input("Ingrese la dirección IP o hostname del servidor: ")
+        username = input("Ingrese el nombre de usuario para la conexión SSH: ")
+        use_private_key = input("¿Desea usar una clave privada para la autenticación? (s/n): ").strip().lower() == 's'
+        private_key_path = input("Ingrese la ruta al archivo de clave privada (deje vacío si no usa clave privada): ") or None
+        password = input("Ingrese la contraseña (deje vacío si usa clave privada): ") or None
+        port = int(input("Ingrese el puerto del servidor SSH (por defecto 22): ") or 22)
+        
+        while True:
+            sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()
+            if sistema_operativo in ["linux", "windows"]:
+                break
+            else:
+                print("Sistema operativo no válido. Por favor, ingrese 'linux' o 'windows'.")
+
+        rutas = []
+        nombres_hojas = set()  # Usamos un conjunto para verificar unicidad
+        while True:
+            carpeta = input("Ingrese la carpeta remota a analizar: ")
+            nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")
+            
+            # Verificar si el nombre de la hoja ya está en uso
+            while nombre_hoja_nueva in nombres_hojas:
+                print(f"La hoja '{nombre_hoja_nueva}' ya existe. Por favor, ingrese un nombre diferente.")
+                nombre_hoja_nueva = input("Ingrese un nuevo nombre para la hoja: ")
+            
+            nombres_hojas.add(nombre_hoja_nueva)
+            rutas.append((carpeta, nombre_hoja_nueva))
+            otra_ruta = input("¿Desea agregar otra ruta a analizar para este servidor? (s/n): ").strip().lower()
+            if otra_ruta != 's':
+                break
+        
+        conexiones.append((host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo))
+        otro_servidor = input("¿Desea agregar otro servidor a analizar? (s/n): ").strip().lower()
+        if otro_servidor != 's':
+            break
+
+    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+    continuar_progreso = input("¿Desea continuar desde un progreso guardado? (s/n): ").strip().lower() == 's'
     opcion = input("¿Desea ejecutar la operación ahora (1) o en una hora específica (2)? Ingrese 1 o 2: ").strip()
     
     if opcion == '1':
-        iniciar_operacion(host, username, use_private_key, private_key_path, password, port, carpeta, nombre_archivo_excel, nombre_hoja_nueva, sistema_operativo)
+        tiempo_limite = datetime.now().replace(hour=5, minute=0, second=0, microsecond=0)
+        if datetime.now() > tiempo_limite:
+            tiempo_limite += timedelta(days=1)
+        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=tiempo_limite.time(), continuar_progreso=continuar_progreso)
+    
     elif opcion == '2':
-        hora_objetivo = input("Ingrese la hora objetivo en formato HH:MM (por ejemplo, 22:00): ").strip()
+        hora_inicio_str = input("Ingrese la hora de inicio en formato HH:MM (por ejemplo, 22:00): ").strip()
         try:
-            hora_objetivo = datetime.strptime(hora_objetivo, "%H:%M").time()
-            print(f"Esperando hasta las {hora_objetivo}.")
-            esperar_hasta_hora_objetivo(hora_objetivo)
-            iniciar_operacion(host, username, use_private_key, private_key_path, password, port, carpeta, nombre_archivo_excel, nombre_hoja_nueva, sistema_operativo)
+            hora_inicio = datetime.strptime(hora_inicio_str, "%H:%M").time()
+            print(f"Hora de inicio establecida a las {hora_inicio}.")
+            
+            hora_final_str = input("¿Desea agregar una hora final para limitar el tiempo de ejecución? (s/n): ").strip().lower()
+            if hora_final_str == 's':
+                hora_final = input("Ingrese la hora final en formato HH:MM (por ejemplo, 05:00): ").strip()
+                try:
+                    hora_final = datetime.strptime(hora_final, "%H:%M").time()
+                    print(f"Hora final establecida a las {hora_final}.")
+                except ValueError:
+                    print("El formato de la hora final no es válido. Asegúrese de usar HH:MM.")
+                    return
+            else:
+                hora_final = None
+
+            esperar_hasta_hora_objetivo(hora_inicio)
+            iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=hora_final, continuar_progreso=continuar_progreso)
         except ValueError:
-            print("El formato de la hora no es válido. Asegúrese de usar HH:MM.")
+            print("El formato de la hora de inicio no es válido. Asegúrese de usar HH:MM.")
+    
     else:
         print("Opción no válida. Por favor, ingrese 1 o 2.")
 
 if __name__ == "__main__":
     main()
-
