@@ -250,47 +250,83 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
     
 
 def main():
+    def obtener_entrada_opcion(prompt, opciones_validas):
+        """Obtiene una opción válida del usuario."""
+        while True:
+            entrada = input(prompt).strip().lower()
+            if entrada in opciones_validas:
+                return entrada
+            else:
+                print(f"Opción no válida. Por favor, ingrese {' o '.join(opciones_validas)}.")
+
+    def obtener_entrada_numerica(prompt, valor_default):
+        """Obtiene una entrada numérica válida del usuario."""
+        while True:
+            entrada = input(prompt).strip()
+            if entrada == "":
+                return valor_default
+            if entrada.isdigit():
+                return int(entrada)
+            else:
+                print("Entrada no válida. Por favor, ingrese un número.")
+
+    def obtener_entrada_no_vacia(prompt):
+        """Obtiene una entrada no vacía del usuario."""
+        while True:
+            entrada = input(prompt).strip()
+            if entrada:
+                return entrada
+            else:
+                print("La entrada no puede estar vacía.")
+
+    def obtener_entrada_hora(prompt):
+        """Obtiene una hora en formato HH:MM del usuario y valida el formato."""
+        while True:
+            entrada = input(prompt).strip()
+            try:
+                return datetime.strptime(entrada, "%H:%M").time()
+            except ValueError:
+                print("El formato de la hora no es válido. Asegúrese de usar HH:MM.")
+
     conexiones = []
     while True:
-        host = input("Ingrese la dirección IP o hostname del servidor: ")
-        username = input("Ingrese el nombre de usuario para la conexión SSH: ")
-        use_private_key = input("¿Desea usar una clave privada para la autenticación? (s/n): ").strip().lower() == 's'
+        host = obtener_entrada_no_vacia("Ingrese la dirección IP o hostname del servidor: ")
+        username = obtener_entrada_no_vacia("Ingrese el nombre de usuario para la conexión SSH: ")
+        use_private_key = obtener_entrada_opcion("¿Desea usar una clave privada para la autenticación? (s/n): ", ['s', 'n']) == 's'
         private_key_path = input("Ingrese la ruta al archivo de clave privada (deje vacío si no usa clave privada): ") or None
         password = input("Ingrese la contraseña (deje vacío si usa clave privada): ") or None
-        port = int(input("Ingrese el puerto del servidor SSH (por defecto 22): ") or 22)
+        port = obtener_entrada_numerica("Ingrese el puerto del servidor SSH (por defecto 22): ", 22)
         
         while True:
-            sistema_operativo = input("Ingrese el sistema operativo (linux/windows): ").strip().lower()
+            sistema_operativo = obtener_entrada_opcion("Ingrese el sistema operativo (linux/windows): ", ["linux", "windows"])
             if sistema_operativo in ["linux", "windows"]:
                 break
-            else:
-                print("Sistema operativo no válido. Por favor, ingrese 'linux' o 'windows'.")
 
         rutas = []
         nombres_hojas = set()  # Usamos un conjunto para verificar unicidad
         while True:
-            carpeta = input("Ingrese la carpeta remota a analizar: ")
-            nombre_hoja_nueva = input("Ingrese el nombre de la nueva hoja: ")
+            carpeta = obtener_entrada_no_vacia("Ingrese la carpeta remota a analizar: ")
+            nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese el nombre de la nueva hoja: ")
             
             # Verificar si el nombre de la hoja ya está en uso
             while nombre_hoja_nueva in nombres_hojas:
                 print(f"La hoja '{nombre_hoja_nueva}' ya existe. Por favor, ingrese un nombre diferente.")
-                nombre_hoja_nueva = input("Ingrese un nuevo nombre para la hoja: ")
+                nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese un nuevo nombre para la hoja: ")
             
             nombres_hojas.add(nombre_hoja_nueva)
             rutas.append((carpeta, nombre_hoja_nueva))
-            otra_ruta = input("¿Desea agregar otra ruta a analizar para este servidor? (s/n): ").strip().lower()
+            otra_ruta = obtener_entrada_opcion("¿Desea agregar otra ruta a analizar para este servidor? (s/n): ", ['s', 'n'])
             if otra_ruta != 's':
                 break
         
         conexiones.append((host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo))
-        otro_servidor = input("¿Desea agregar otro servidor a analizar? (s/n): ").strip().lower()
+        otro_servidor = obtener_entrada_opcion("¿Desea agregar otro servidor a analizar? (s/n): ", ['s', 'n'])
         if otro_servidor != 's':
             break
 
     nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
-    continuar_progreso = input("¿Desea continuar desde un progreso guardado? (s/n): ").strip().lower() == 's'
-    opcion = input("¿Desea ejecutar la operación ahora (1) o en una hora específica (2)? Ingrese 1 o 2: ").strip()
+    continuar_progreso = obtener_entrada_opcion("¿Desea continuar desde un progreso guardado? (s/n): ", ['s', 'n']) == 's'
+    opcion = obtener_entrada_opcion("¿Desea ejecutar la operación ahora (1) o en una hora específica (2)? Ingrese 1 o 2: ", ['1', '2'])
     
     if opcion == '1':
         tiempo_limite = datetime.now().replace(hour=5, minute=0, second=0, microsecond=0)
@@ -299,30 +335,66 @@ def main():
         iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=tiempo_limite.time(), continuar_progreso=continuar_progreso)
     
     elif opcion == '2':
-        hora_inicio_str = input("Ingrese la hora de inicio en formato HH:MM (por ejemplo, 22:00): ").strip()
-        try:
-            hora_inicio = datetime.strptime(hora_inicio_str, "%H:%M").time()
-            print(f"Hora de inicio establecida a las {hora_inicio}.")
-            
-            hora_final_str = input("¿Desea agregar una hora final para limitar el tiempo de ejecución? (s/n): ").strip().lower()
-            if hora_final_str == 's':
-                hora_final = input("Ingrese la hora final en formato HH:MM (por ejemplo, 05:00): ").strip()
-                try:
-                    hora_final = datetime.strptime(hora_final, "%H:%M").time()
-                    print(f"Hora final establecida a las {hora_final}.")
-                except ValueError:
-                    print("El formato de la hora final no es válido. Asegúrese de usar HH:MM.")
-                    return
-            else:
-                hora_final = None
+        hora_inicio = obtener_entrada_hora("Ingrese la hora de inicio en formato HH:MM (por ejemplo, 22:00): ")
+        print(f"Hora de inicio establecida a las {hora_inicio}.")
+        
+        hora_final_str = obtener_entrada_opcion("¿Desea agregar una hora final para limitar el tiempo de ejecución? (s/n): ", ['s', 'n'])
+        if hora_final_str == 's':
+            hora_final = obtener_entrada_hora("Ingrese la hora final en formato HH:MM (por ejemplo, 05:00): ")
+            print(f"Hora final establecida a las {hora_final}.")
+        else:
+            hora_final = None
 
-            esperar_hasta_hora_objetivo(hora_inicio)
-            iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=hora_final, continuar_progreso=continuar_progreso)
-        except ValueError:
-            print("El formato de la hora de inicio no es válido. Asegúrese de usar HH:MM.")
+        esperar_hasta_hora_objetivo(hora_inicio)
+        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=hora_final, continuar_progreso=continuar_progreso)
     
     else:
         print("Opción no válida. Por favor, ingrese 1 o 2.")
 
 if __name__ == "__main__":
+    print(
+'''
+_____________________$$$
+____________________$___$               
+_____________________$$$
+_____________________$_$
+_____________________$_$
+___________________$$$_$$$
+_________________$$__$$$__$$$
+_______________$$__$$$$$$$___$
+______________$_______________$
+_____________$_________________$
+_____________$_________________$
+_____________$_____$$$$$$$$$$$$$$$
+_____________$____$_______________$
+_____________$____$___$$$$$$$$$$$$$
+_____________$___$___$___________$$$
+_____________$___$___$_$$$___$$$__$$
+_____________$___$___$_$$$___$$$__$$
+_____________$___$___$___________$$$
+_____________$____$___$$$$$$$$$$$$$
+_____________$_____$$$$$$$$$$$$$$
+_____________$_________________$
+_____________$____$$$$$$$$$$$$$$
+_____________$___$__$__$__$__$
+_____________$__$$$$$$$$$$$$$$
+_____________$__$___$__$__$__$
+_____________$___$$$$$$$$$$$$$$$
+____________$$$_________________$$$
+__________$$___$$$_________$$$$$___$$
+________$$________$$$$$$$$$__________$$$
+_______$__$$_____________________$$$$___$$
+____$$$$$___$$$$$$$$______$$$$$$$_______$_$
+__$______$$_________$$$$$$______________$_$$
+_$____$____$____________________________$_$_$
+_$_____$___$______________$$$$$$$$$$$___$_$_$$
+_$$$____$___$__$$$$$$$$$$$$__________$___$_$_$$
+$___$$$$____$__$_____________________$___$_$$_$
+$$$____$___$$__$_____________________$$__$_$__$
+$___$__$__$$___$______________________$__$$$__$
+$_____$$_$$____$_______________$$$____$__$_$__$
+
+--- Proceso Automático Unificado para Listado e Inventariado de Nodos Activos ---
+
+''')
     main()
