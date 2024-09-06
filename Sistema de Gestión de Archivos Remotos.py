@@ -6,6 +6,7 @@ from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
 import time
 import pickle
+import subprocess
 
 def listar_archivos_remotos_linux(sftp_client, carpeta):
     archivos = []
@@ -48,6 +49,51 @@ def listar_archivos_remotos_windows(sftp_client, carpeta):
     except Exception as e:
         print(f"Error inesperado al listar archivos remotos: {e}")
     return archivos
+
+def listar_archivos_remotos_windows_red_compartida(ruta_red):
+    """Obtiene las rutas compartidas y lista archivos en ellas, ignorando las carpetas locales con '$' en su nombre."""
+    archivos_totales = []
+    try:
+        # Obtener rutas compartidas
+        resultado = subprocess.check_output(["powershell", "-Command", "Get-SmbShare"], text=True)
+        lineas = resultado.strip().split('\n')
+        
+        # Extraer los nombres de las rutas compartidas
+        rutas_compartidas = []
+        for linea in lineas[3:]:  # Saltar las primeras 3 líneas de encabezado
+            columnas = linea.split()
+            if len(columnas) > 0:
+                nombre = columnas[0]
+                if '$' not in nombre:
+                    rutas_compartidas.append(columnas[2])  # Tomar el valor de la columna 'Path'
+
+        for ruta_red in rutas_compartidas:
+            ruta_red = ruta_red.strip()  # Limpiar espacios en blanco
+
+            if not ruta_red:
+                continue
+
+            # Validar que la ruta compartida sea accesible
+            if os.path.exists(ruta_red):
+                # Verificar si la ruta es accesible
+                ruta_red = os.path.normpath(ruta_red)
+                for dirpath, dirnames, filenames in os.walk(ruta_red):
+                    for nombre_archivo in filenames:
+                        ruta_completa = os.path.join(dirpath, nombre_archivo)
+                        fecha_modificacion = datetime.fromtimestamp(os.path.getmtime(ruta_completa))
+                        fecha_acceso = datetime.fromtimestamp(os.path.getatime(ruta_completa))
+                        nombre, extension = os.path.splitext(nombre_archivo)
+                        ruta_padre = os.path.dirname(ruta_completa)
+                        archivos_totales.append((nombre, extension, fecha_modificacion, fecha_acceso, ruta_padre))
+            else:
+                print(f"No se puede acceder a la ruta compartida: {ruta_red}")
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error al obtener las rutas compartidas: {e}")
+    except Exception as e:
+        print(f"Error al listar archivos en la red compartida: {e}")
+
+    return archivos_totales
 
 def agregar_hoja_excel(libro_excel, nombre_hoja):
     nombre_hoja = limpiar_nombre(nombre_hoja)
@@ -167,7 +213,7 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
         if ssh_client:
             try:
                 sftp_client = ssh_client.open_sftp()
-                for carpeta, nombre_hoja_nueva in rutas:
+                for carpeta, nombre_hoja_nueva, es_red_compartida in rutas:
                     progreso_clave = f"{host}_{carpeta}"
                     if progreso_clave in progreso:
                         print(f"Saltando carpeta {carpeta} en {host} ya que se completó en una ejecución previa.")
@@ -187,15 +233,26 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
                         guardar_progreso(progreso)
                         return
                     
-                    if sistema_operativo == "linux":
-                        archivos = listar_archivos_remotos_linux(sftp_client, carpeta)
-                    elif sistema_operativo == "windows":
-                        archivos = listar_archivos_remotos_windows(sftp_client, carpeta)
+                    if es_red_compartida:
+                        if sistema_operativo == "windows":
+                            archivos = listar_archivos_remotos_windows_red_compartida(carpeta)
+                        else:
+                            print("Las carpetas de red compartidas no son compatibles con sistemas operativos que no sean Windows.")
+                            continue
                     else:
-                        print("Sistema operativo no soportado.")
-                        continue
+                        if sistema_operativo == "linux":
+                            archivos = listar_archivos_remotos_linux(sftp_client, carpeta)
+                        elif sistema_operativo == "windows":
+                            archivos = listar_archivos_remotos_windows(sftp_client, carpeta)
+                        else:
+                            print("Sistema operativo no soportado.")
+                            continue
                     
-                    guardar_en_excel(archivos, nombre_archivo_excel, nombre_hoja_nueva)
+                    if archivos:
+                        guardar_en_excel(archivos, nombre_archivo_excel, nombre_hoja_nueva)
+                        print(f"Datos guardados exitosamente en la hoja '{nombre_hoja_nueva}' en {nombre_archivo_excel}.")
+                    else:
+                        print(f"No se encontraron archivos en la carpeta {carpeta}.")
                     progreso[progreso_clave] = True
             except Exception as e:
                 print(f"Error al procesar la operación en {host}: {e}")
@@ -283,7 +340,8 @@ def main():
                 nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese un nuevo nombre para la hoja: ")
             
             nombres_hojas.add(nombre_hoja_nueva)
-            rutas.append((carpeta, nombre_hoja_nueva))
+            es_red_compartida = obtener_entrada_opcion("¿Es esta una carpeta de red compartida? (s/n): ", ['s', 'n']) == 's'
+            rutas.append((carpeta, nombre_hoja_nueva, es_red_compartida))
             otra_ruta = obtener_entrada_opcion("¿Desea agregar otra ruta a analizar para este servidor? (s/n): ", ['s', 'n'])
             if otra_ruta != 's':
                 break
