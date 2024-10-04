@@ -2,6 +2,7 @@ import os
 import stat
 import paramiko
 from openpyxl import load_workbook, Workbook
+import openpyxl
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
 import time
@@ -162,7 +163,10 @@ def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
         libro_excel.save(ruta_archivo)
         tiempo_total = time.time() - tiempo_inicio
         print(f"Datos guardados exitosamente en el archivo Excel: {ruta_archivo}")
-        print(f"Tiempo total para guardar en Excel: {tiempo_total:.2f} segundos")
+        # Capturar la hora de finalización
+        hora_final = datetime.now()
+        hora_formateada = hora_final.strftime("%H:%M:%S")
+        print(f"Tiempo total para guardar en Excel: {tiempo_total:.2f} segundos a las {hora_formateada}")
     except PermissionError as e:
         print(f"Error de permisos al guardar el archivo: {ruta_archivo} - {e}")
 
@@ -192,31 +196,22 @@ def establecer_conexion(host, username, use_private_key, private_key_path=None, 
         print(f"Error inesperado al intentar conectar: {e}")
         return None
 
-def guardar_progreso(progreso, nombre_archivo="progreso.pkl"):
-    with open(nombre_archivo, 'wb') as archivo:
-        pickle.dump(progreso, archivo)
-    print(f"Progreso guardado en {nombre_archivo}.")
-
-def cargar_progreso(nombre_archivo="progreso.pkl"):
-    if os.path.exists(nombre_archivo):
-        with open(nombre_archivo, 'rb') as archivo:
-            return pickle.load(archivo)
-    return None
-
-def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None, continuar_progreso=False):
-    progreso = cargar_progreso() if continuar_progreso else {}
-
+def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None):
     # Convertir hora_final en un objeto datetime solo si se proporciona
     if hora_final:
         hora_final_dt = datetime.combine(datetime.today(), hora_final)
     else:
         hora_final_dt = None
 
-    # Establecer hora_fin como una fecha y hora completa (por defecto 5 AM del siguiente día)
-    hora_fin = datetime.now().replace(hour=5, minute=0, second=0, microsecond=0)
-    if datetime.now() >= hora_fin:
+    # Establecer hora_fin como la hora límite (5 AM por defecto), considerando si la hora límite es anterior a la de inicio
+    hora_inicio = datetime.now()
+    hora_fin = hora_inicio.replace(hour=5, minute=0, second=0, microsecond=0)
+
+    # Si la hora de inicio es después de la hora límite, asumir que la hora límite pertenece al día siguiente
+    if hora_inicio.time() >= hora_fin.time():
         hora_fin += timedelta(days=1)
 
+    # Se elimina la variable progreso
     for conexion in conexiones:
         host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo, passphrase = conexion
         ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port, passphrase)
@@ -224,25 +219,19 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
             try:
                 sftp_client = ssh_client.open_sftp()
                 for carpeta, nombre_hoja_nueva, es_red_compartida in rutas:
-                    progreso_clave = f"{host}_{carpeta}"
-                    if progreso_clave in progreso:
-                        print(f"Saltando carpeta {carpeta} en {host} ya que se completó en una ejecución previa.")
-                        continue
 
                     ahora = datetime.now()
 
                     # Comprobar si se ha alcanzado la hora límite
                     if ahora >= hora_fin:
                         print("Se alcanzó la hora límite. Pausando la operación.")
-                        guardar_progreso(progreso)
-                        return
+                        break  # Se podría optar por salir del ciclo o pausar aquí
                     
                     # Comprobar si se ha alcanzado la hora final (solo si se ha proporcionado)
                     if hora_final_dt and ahora >= hora_final_dt:
                         print("Se alcanzó la hora final. Pausando la operación.")
-                        guardar_progreso(progreso)
-                        return
-                    
+                        break  # Salir del ciclo o pausar
+
                     if es_red_compartida:
                         if sistema_operativo == "windows":
                             archivos = listar_archivos_remotos_windows_red_compartida(carpeta)
@@ -263,7 +252,6 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
                         print(f"Datos guardados exitosamente en la hoja '{nombre_hoja_nueva}' en {nombre_archivo_excel}.")
                     else:
                         print(f"No se encontraron archivos en la carpeta {carpeta}.")
-                    progreso[progreso_clave] = True
             except Exception as e:
                 print(f"Error al procesar la operación en {host}: {e}")
             finally:
@@ -271,7 +259,6 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
         else:
             print(f"No se pudo establecer la conexión SSH con {host}.")
 
-    guardar_progreso(progreso)
 
 def esperar_hasta_hora_objetivo(hora_objetivo):
     ahora = datetime.now()
@@ -283,6 +270,10 @@ def esperar_hasta_hora_objetivo(hora_objetivo):
     tiempo_espera = (objetivo - ahora).total_seconds()
     print(f"Esperando {tiempo_espera / 60:.2f} minutos para ejecutar la tarea a las {objetivo.time()}.")
     time.sleep(tiempo_espera)
+
+import os
+import openpyxl  # Importa openpyxl para trabajar con archivos Excel
+from datetime import datetime
 
 def main():
     def obtener_entrada_opcion(prompt, opciones_validas):
@@ -330,25 +321,64 @@ def main():
         use_private_key = obtener_entrada_opcion("¿Desea usar una clave privada para la autenticación? (s/n): ", ['s', 'n']) == 's'
         private_key_path = input("Ingrese la ruta al archivo de clave privada (deje vacío si no usa clave privada): ") or None
         passphrase = input("Ingrese la passphrase para la clave privada (deje vacío si no requiere passphrase): ") or None
-        password = input("Ingrese la contraseña (en caso de necesitarla, en caso contrario dejar vacio): ") or None
+        password = input("Ingrese la contraseña (en caso de necesitarla, en caso contrario dejar vacío): ") or None
         port = obtener_entrada_numerica("Ingrese el puerto del servidor SSH (por defecto 22): ", 22)
-        
+
         while True:
             sistema_operativo = obtener_entrada_opcion("Ingrese el sistema operativo (linux/windows): ", ["linux", "windows"])
             if sistema_operativo in ["linux", "windows"]:
                 break
 
         rutas = []
-        nombres_hojas = set()  # Usamos un conjunto para verificar unicidad
+        nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+
         while True:
-            carpeta = obtener_entrada_no_vacia("Ingrese la carpeta remota a analizar: ")
-            nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese el nombre de la nueva hoja: ")
-            
-            # Verificar si el nombre de la hoja ya está en uso
-            while nombre_hoja_nueva in nombres_hojas:
-                print(f"La hoja '{nombre_hoja_nueva}' ya existe. Por favor, ingrese un nombre diferente.")
-                nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese un nuevo nombre para la hoja: ")
-            
+            if os.path.exists(nombre_archivo_excel):
+                try:
+                    # Intentar cargar el archivo
+                    workbook = openpyxl.load_workbook(nombre_archivo_excel)
+                    print(f"Archivo '{nombre_archivo_excel}' cargado exitosamente.")
+                    break
+                except Exception as e:
+                    # Si falla al cargar, preguntamos si desea crear uno nuevo o intentar otro
+                    respuesta = obtener_entrada_opcion("El archivo no existe. ¿Desea crear uno nuevo? (s/n): ", ['s', 'n'])
+                    if respuesta == 's':
+                        workbook = openpyxl.Workbook()  # Crear un nuevo archivo Excel
+                        workbook.save(nombre_archivo_excel)  # Guardar el nuevo archivo
+                        print(f"Archivo '{nombre_archivo_excel}' creado exitosamente.")
+                        break
+                    else:
+                        # Preguntar por un nuevo nombre de archivo
+                        nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+            else:
+                # Si no existe, preguntar si desea crearlo
+                print(f"El archivo '{nombre_archivo_excel}' no existe.")
+                respuesta = obtener_entrada_opcion("¿Desea crear uno nuevo? (s/n): ", ['s', 'n'])
+                if respuesta == 's':
+                    workbook = openpyxl.Workbook()  # Crear un nuevo archivo Excel
+                    workbook.save(nombre_archivo_excel)  # Guardar el nuevo archivo
+                    print(f"Archivo '{nombre_archivo_excel}' creado exitosamente.")
+                    break
+                else:
+                    # Preguntar por un nuevo nombre de archivo
+                    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+
+        nombres_hojas = set(workbook.sheetnames)
+
+        while True:
+            carpeta = obtener_entrada_no_vacia("Ingrese la ruta remota a analizar: ")
+            nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese el nombre de la hoja: ")
+
+            if nombre_hoja_nueva in nombres_hojas:
+                respuesta = obtener_entrada_opcion(f"La hoja '{nombre_hoja_nueva}' ya existe. ¿Desea continuar escribiendo ahí? (s/n): ", ['s', 'n'])
+                if respuesta == 'n':
+                    nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese un nuevo nombre para la hoja: ")
+                    if nombre_hoja_nueva in nombres_hojas:
+                        print(f"La hoja '{nombre_hoja_nueva}' también ya existe.")
+                        continue
+            else:
+                print(f"Se creará una nueva hoja '{nombre_hoja_nueva}'.")
+
             nombres_hojas.add(nombre_hoja_nueva)
             es_red_compartida = obtener_entrada_opcion("¿Es esta una carpeta de red compartida? (s/n): ", ['s', 'n']) == 's'
             rutas.append((carpeta, nombre_hoja_nueva, es_red_compartida))
@@ -361,13 +391,10 @@ def main():
         if otro_servidor != 's':
             break
 
-    nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
-    continuar_progreso = obtener_entrada_opcion("¿Desea continuar desde un progreso guardado? (s/n): ", ['s', 'n']) == 's'
     opcion = obtener_entrada_opcion("¿Desea ejecutar la operación ahora (1) o en una hora específica (2)? Ingrese 1 o 2: ", ['1', '2'])
     
     if opcion == '1':
-        # Ejecutar la operación de inmediato sin establecer un tiempo límite
-        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None, continuar_progreso=continuar_progreso)
+        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None)
     
     elif opcion == '2':
         hora_inicio = obtener_entrada_hora("Ingrese la hora de inicio en formato HH:MM (por ejemplo, 22:00): ")
@@ -381,10 +408,11 @@ def main():
             hora_final = None
 
         esperar_hasta_hora_objetivo(hora_inicio)
-        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=hora_final, continuar_progreso=continuar_progreso)
+        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=hora_final)
     
     else:
         print("Opción no válida. Por favor, ingrese 1 o 2.")
+
 
 if __name__ == "__main__":
     print(
@@ -430,6 +458,6 @@ $___$__$__$$___$______________________$__$$$__$
 $_____$$_$$____$_______________$$$____$__$_$__$
 
 --- Proceso Automático Unificado para Listado e Inventariado de Nodos Activos ---
-
+GGITHUB: bender2997
 ''')
     main()
