@@ -458,6 +458,6 @@ $___$__$__$$___$______________________$__$$$__$
 $_____$$_$$____$_______________$$$____$__$_$__$
 
 --- Proceso Automático Unificado para Listado e Inventariado de Nodos Activos ---
-GGITHUB: bender2997
+GITHUB: bender2997
 ''')
     main()
