@@ -55,23 +55,25 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
     """Obtiene las rutas compartidas y lista archivos en ellas, ignorando las carpetas locales con '$' en su nombre."""
     archivos_totales = []
     try:
-        # Obtener rutas compartidas
+        # Obtener rutas compartidas desde el servidor
         resultado = subprocess.check_output(["powershell", "-Command", "Get-SmbShare"], text=True)
         lineas = resultado.strip().split('\n')
 
-        # Extraer los nombres de las rutas compartidas
+        # Extraer los nombres y rutas de las carpetas compartidas
         rutas_compartidas = []
         for linea in lineas[3:]:  # Saltar las primeras 3 líneas de encabezado
             columnas = linea.split()
             if len(columnas) > 0:
                 nombre = columnas[0]
-                if '$' not in nombre:
-                    rutas_compartidas.append(columnas[2])  # Tomar el valor de la columna 'Path'
+                if '$' not in nombre:  # Ignorar carpetas administrativas
+                    # Concatenar la ruta de red con la carpeta compartida
+                    rutas_compartidas.append(f"{ruta_red}\\{nombre}")
 
-        # Intentar analizar la ruta específica proporcionada
+        # Si se ingresa una ruta específica (ruta_red), usar solo esa para la búsqueda
         if os.path.exists(ruta_red):
-            rutas_compartidas = [ruta_red]  # Usar solo la ruta proporcionada
+            rutas_compartidas = [ruta_red]  # Sobrescribir para analizar solo la ruta ingresada
 
+        # Analizar cada carpeta compartida accesible
         for ruta_compartida in rutas_compartidas:
             ruta_compartida = ruta_compartida.strip()  # Limpiar espacios en blanco
 
@@ -80,14 +82,16 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
 
             # Validar que la ruta compartida sea accesible
             if os.path.exists(ruta_compartida):
-                # Verificar si la ruta es accesible
+                # Convertir la ruta en un formato legible para el sistema operativo
                 ruta_compartida = os.path.normpath(ruta_compartida)
+
+                # Recorrer archivos en la ruta compartida
                 for dirpath, dirnames, filenames in os.walk(ruta_compartida):
                     for nombre_archivo in filenames:
-                        # Concatenar la ruta base del servidor con la ruta completa del archivo
+                        # Generar la ruta completa en formato de red
                         ruta_completa_servidor = os.path.join(ruta_red, os.path.relpath(dirpath, ruta_compartida), nombre_archivo)
-
-                        # Obtener fechas de modificación y acceso
+                        
+                        # Obtener las fechas de modificación y acceso
                         ruta_completa_local = os.path.join(dirpath, nombre_archivo)
                         fecha_modificacion = datetime.fromtimestamp(os.path.getmtime(ruta_completa_local))
                         fecha_acceso = datetime.fromtimestamp(os.path.getatime(ruta_completa_local))
@@ -95,7 +99,7 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
                         ruta_padre = os.path.dirname(ruta_completa_local)
 
                         # Agregar a la lista con la ruta completa del servidor
-                        archivos_totales.append((nombre, extension, fecha_modificacion, fecha_acceso, ruta_padre, ruta_completa_servidor))
+                        archivos_totales.append((nombre, extension, fecha_modificacion, fecha_acceso, ruta_padre))
             else:
                 print(f"No se puede acceder a la ruta compartida: {ruta_compartida}")
 
@@ -105,6 +109,7 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
         print(f"Error al listar archivos en la red compartida: {e}")
 
     return archivos_totales
+
 
 def agregar_hoja_excel(libro_excel, nombre_hoja):
     nombre_hoja = limpiar_nombre(nombre_hoja)
@@ -129,7 +134,10 @@ def ajustar_ancho_columnas(hoja):
         adjusted_width = (max_length + 2)
         hoja.column_dimensions[column].width = adjusted_width
 
-def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
+# Lista global para almacenar el resumen del análisis de cada servidor
+resumen_analisis_servidores = []
+
+def guardar_en_excel(archivos, nombre_archivo, ip_servidor, ruta_servidor, nombre_hoja_nueva=None):
     # Determina la ruta del archivo en la misma carpeta donde se ejecuta el código
     nombre_archivo = nombre_archivo or "Bitacora.xlsx"
     nombre_archivo = nombre_archivo if nombre_archivo.lower().endswith('.xlsx') else nombre_archivo + '.xlsx'
@@ -162,13 +170,47 @@ def guardar_en_excel(archivos, nombre_archivo, nombre_hoja_nueva=None):
     try:
         libro_excel.save(ruta_archivo)
         tiempo_total = time.time() - tiempo_inicio
-        print(f"Datos guardados exitosamente en el archivo Excel: {ruta_archivo}")
-        # Capturar la hora de finalización
         hora_final = datetime.now()
         hora_formateada = hora_final.strftime("%H:%M:%S")
+        
+        print(f"Datos guardados exitosamente en el archivo Excel: {ruta_archivo}")
         print(f"Tiempo total para guardar en Excel: {tiempo_total:.2f} segundos a las {hora_formateada}")
+
+        # Agregar el resumen del análisis a la lista global
+        resumen_analisis_servidores.append({
+            "Servidor IP": ip_servidor,
+            "Ruta": ruta_servidor,
+            "Archivo Excel": nombre_archivo,
+            "Hoja": nombre_hoja_final,
+            "Completado": True,
+            "Hora Final": hora_formateada,
+            "Duración": f"{tiempo_total:.2f} segundos"
+        })
+        
     except PermissionError as e:
         print(f"Error de permisos al guardar el archivo: {ruta_archivo} - {e}")
+        # Agregar a la lista global que el análisis no se completó
+        resumen_analisis_servidores.append({
+            "Servidor IP": ip_servidor,
+            "Ruta": ruta_servidor,
+            "Archivo Excel": nombre_archivo,
+            "Hoja": nombre_hoja_final,
+            "Completado": False,
+            "Hora Final": None,
+            "Duración": None
+        })
+
+def mostrar_resumen_analisis():
+    print("\nResumen del análisis de servidores:")
+    for resumen in resumen_analisis_servidores:
+        print(f"\nServidor IP: {resumen['Servidor IP']}")
+        print(f"Ruta: {resumen['Ruta']}")
+        print(f"Archivo Excel: {resumen['Archivo Excel']}")
+        print(f"Hoja: {resumen['Hoja']}")
+        print(f"Completado: {'Sí' if resumen['Completado'] else 'No'}")
+        if resumen['Completado']:
+            print(f"Hora de finalización: {resumen['Hora Final']}")
+            print(f"Duración del análisis: {resumen['Duración']}")
 
 def limpiar_nombre(nombre):
     caracteres_no_validos = ['\\', '/', '*', '[', ']', ':', '?']
@@ -203,15 +245,19 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
     else:
         hora_final_dt = None
 
-    # Establecer hora_fin como la hora límite (5 AM por defecto), considerando si la hora límite es anterior a la de inicio
+    # Obtener la hora actual y establecer hora_fin como 5 AM por defecto, si no se proporciona hora_final
     hora_inicio = datetime.now()
     hora_fin = hora_inicio.replace(hour=5, minute=0, second=0, microsecond=0)
 
-    # Si la hora de inicio es después de la hora límite, asumir que la hora límite pertenece al día siguiente
+    # Si la hora final proporcionada es anterior a la hora de inicio, asumir que corresponde al día siguiente
+    if hora_final and hora_inicio.time() > hora_final:
+        hora_final_dt += timedelta(days=1)
+    
+    # Si la hora de inicio es posterior a las 5 AM, asumir que la hora límite pertenece al día siguiente
     if hora_inicio.time() >= hora_fin.time():
         hora_fin += timedelta(days=1)
 
-    # Se elimina la variable progreso
+    # Comienza el ciclo de conexiones y análisis
     for conexion in conexiones:
         host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo, passphrase = conexion
         ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port, passphrase)
@@ -222,16 +268,17 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
 
                     ahora = datetime.now()
 
-                    # Comprobar si se ha alcanzado la hora límite
+                    # Comprobar si se ha alcanzado la hora límite (por defecto 5 AM)
                     if ahora >= hora_fin:
                         print("Se alcanzó la hora límite. Pausando la operación.")
-                        break  # Se podría optar por salir del ciclo o pausar aquí
+                        break  # Pausar o salir del ciclo
                     
-                    # Comprobar si se ha alcanzado la hora final (solo si se ha proporcionado)
+                    # Comprobar si se ha alcanzado la hora final personalizada (si se proporcionó)
                     if hora_final_dt and ahora >= hora_final_dt:
                         print("Se alcanzó la hora final. Pausando la operación.")
-                        break  # Salir del ciclo o pausar
+                        break
 
+                    # Operaciones de listar archivos según el sistema operativo
                     if es_red_compartida:
                         if sistema_operativo == "windows":
                             archivos = listar_archivos_remotos_windows_red_compartida(carpeta)
@@ -248,7 +295,7 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
                             continue
                     
                     if archivos:
-                        guardar_en_excel(archivos, nombre_archivo_excel, nombre_hoja_nueva)
+                        guardar_en_excel(archivos, nombre_archivo_excel, host, carpeta, nombre_hoja_nueva)
                         print(f"Datos guardados exitosamente en la hoja '{nombre_hoja_nueva}' en {nombre_archivo_excel}.")
                     else:
                         print(f"No se encontraron archivos en la carpeta {carpeta}.")
@@ -458,6 +505,6 @@ $___$__$__$$___$______________________$__$$$__$
 $_____$$_$$____$_______________$$$____$__$_$__$
 
 --- Proceso Automático Unificado para Listado e Inventariado de Nodos Activos ---
-GITHUB: bender2997
+GIHUB: bender2997
 ''')
     main()
