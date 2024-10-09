@@ -1,21 +1,27 @@
 import os
 import stat
 import paramiko
-from openpyxl import load_workbook, Workbook
-import openpyxl
-from openpyxl.utils import get_column_letter
-from datetime import datetime, timedelta
 import time
 import pickle
 import subprocess
+import threading
+import openpyxl
+from openpyxl import load_workbook, Workbook
+from openpyxl.utils import get_column_letter
+from datetime import datetime, timedelta
 
-def listar_archivos_remotos_linux(sftp_client, carpeta):
+def listar_archivos_remotos_linux(sftp_client, carpeta, detener_event):
     archivos = []
     try:
         for entry in sftp_client.listdir_attr(carpeta):
+            # Verificación del evento para detener el proceso
+            if detener_event.is_set():
+                print("Proceso detenido por el evento de detención.")
+                return archivos
+
             ruta_completa = carpeta + "/" + entry.filename
             if stat.S_ISDIR(entry.st_mode):
-                archivos.extend(listar_archivos_remotos_linux(sftp_client, ruta_completa))
+                archivos.extend(listar_archivos_remotos_linux(sftp_client, ruta_completa, detener_event))
             else:
                 fecha_modificacion = datetime.fromtimestamp(entry.st_mtime)
                 fecha_acceso = datetime.fromtimestamp(entry.st_atime)
@@ -30,13 +36,18 @@ def listar_archivos_remotos_linux(sftp_client, carpeta):
         print(f"Error inesperado al listar archivos remotos: {e}")
     return archivos
 
-def listar_archivos_remotos_windows(sftp_client, carpeta):
+def listar_archivos_remotos_windows(sftp_client, carpeta, detener_event):
     archivos = []
     try:
         for entry in sftp_client.listdir_attr(carpeta):
+            # Verificación del evento para detener el proceso
+            if detener_event.is_set():
+                print("Proceso detenido por el evento de detención.")
+                return archivos
+
             ruta_completa = os.path.join(carpeta, entry.filename.replace('/', '\\'))
             if stat.S_ISDIR(entry.st_mode):
-                archivos.extend(listar_archivos_remotos_windows(sftp_client, ruta_completa))
+                archivos.extend(listar_archivos_remotos_windows(sftp_client, ruta_completa, detener_event))
             else:
                 fecha_modificacion = datetime.fromtimestamp(entry.st_mtime)
                 fecha_acceso = datetime.fromtimestamp(entry.st_atime)
@@ -51,7 +62,7 @@ def listar_archivos_remotos_windows(sftp_client, carpeta):
         print(f"Error inesperado al listar archivos remotos: {e}")
     return archivos
 
-def listar_archivos_remotos_windows_red_compartida(ruta_red):
+def listar_archivos_remotos_windows_red_compartida(ruta_red, detener_event):
     """Obtiene las rutas compartidas y lista archivos en ellas, ignorando las carpetas locales con '$' en su nombre."""
     archivos_totales = []
     try:
@@ -77,6 +88,11 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
         for ruta_compartida in rutas_compartidas:
             ruta_compartida = ruta_compartida.strip()  # Limpiar espacios en blanco
 
+            # Verificación del evento para detener el proceso
+            if detener_event.is_set():
+                print("Proceso detenido por el evento de detención.")
+                return archivos_totales
+
             if not ruta_compartida:
                 continue
 
@@ -88,6 +104,11 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
                 # Recorrer archivos en la ruta compartida
                 for dirpath, dirnames, filenames in os.walk(ruta_compartida):
                     for nombre_archivo in filenames:
+                        # Verificación del evento para detener el proceso
+                        if detener_event.is_set():
+                            print("Proceso detenido por el evento de detención.")
+                            return archivos_totales
+
                         # Generar la ruta completa en formato de red
                         ruta_completa_servidor = os.path.join(ruta_red, os.path.relpath(dirpath, ruta_compartida), nombre_archivo)
                         
@@ -110,16 +131,17 @@ def listar_archivos_remotos_windows_red_compartida(ruta_red):
 
     return archivos_totales
 
-
 def agregar_hoja_excel(libro_excel, nombre_hoja):
-    nombre_hoja = limpiar_nombre(nombre_hoja)
+    # Verificar si se ha dado un nombre de hoja válido
+    if not nombre_hoja:
+        return None  # Si el nombre está vacío, no hacer nada
+
+    # Verificar si la hoja ya existe
     if nombre_hoja in libro_excel.sheetnames:
-        print(f"La hoja '{nombre_hoja}' ya existe en el archivo de Excel. Es necesario cambiar el nombre.")
-        nuevo_nombre = input("Ingrese un nuevo nombre para la hoja: ")
-        return agregar_hoja_excel(libro_excel, nuevo_nombre)
-    else:
-        libro_excel.create_sheet(title=nombre_hoja)
-        return nombre_hoja
+        return nombre_hoja  # No crear una nueva, solo devolver el nombre de la hoja existente
+    
+    libro_excel.create_sheet(title=nombre_hoja)
+    return nombre_hoja
 
 def ajustar_ancho_columnas(hoja):
     for col in hoja.columns:
@@ -140,19 +162,31 @@ resumen_analisis_servidores = []
 def guardar_en_excel(archivos, nombre_archivo, ip_servidor, ruta_servidor, nombre_hoja_nueva=None):
     # Determina la ruta del archivo en la misma carpeta donde se ejecuta el código
     nombre_archivo = nombre_archivo or "Bitacora.xlsx"
-    nombre_archivo = nombre_archivo if nombre_archivo.lower().endswith('.xlsx') else nombre_archivo + '.xlsx'
     ruta_archivo = os.path.join(os.getcwd(), nombre_archivo)
 
+    # Si el archivo ya existe, abrirlo; si no, crear uno nuevo
     if os.path.exists(ruta_archivo):
         libro_excel = load_workbook(ruta_archivo)
     else:
         libro_excel = Workbook()
 
-    nombre_hoja = nombre_hoja_nueva if nombre_hoja_nueva else "Datos"
+    # Verificar si se especificó una hoja nueva y válida
+    if nombre_hoja_nueva:
+        nombre_hoja = nombre_hoja_nueva
+    else:
+        # Si no se especifica, no se creará una nueva hoja
+        print("No se especificó una hoja nueva. No se añadirá una hoja.")
+        return
+
+    # Crear o obtener la hoja
     nombre_hoja_final = agregar_hoja_excel(libro_excel, nombre_hoja)
-    hoja = libro_excel[nombre_hoja_final]
+    if not nombre_hoja_final:
+        print("No se creará la hoja porque no se proporcionó un nombre válido.")
+        return
     
-    # Añadir cabecera si es una nueva hoja
+    hoja = libro_excel[nombre_hoja_final]
+
+    # Añadir cabecera solo si es una nueva hoja
     if hoja.max_row == 1:
         hoja.append(["ID", "Nombre de dato / archivo", "Formato", "Fecha de creación", "Fecha de modificación", "Ruta",
                      "Responsable del dato / archivo", "Propósito del dato / archivo",
@@ -162,17 +196,20 @@ def guardar_en_excel(archivos, nombre_archivo, ip_servidor, ruta_servidor, nombr
     # Iniciar cronómetro
     tiempo_inicio = time.time()
 
+    # Guardar los datos en la hoja
     for id_archivo, archivo in enumerate(archivos, start=1):
         hoja.append([id_archivo] + list(archivo))
-    
+
+    # Ajustar el ancho de las columnas (esto es opcional)
     ajustar_ancho_columnas(hoja)
-    
+
     try:
+        # Guardar el archivo Excel
         libro_excel.save(ruta_archivo)
         tiempo_total = time.time() - tiempo_inicio
         hora_final = datetime.now()
         hora_formateada = hora_final.strftime("%H:%M:%S")
-        
+
         print(f"Datos guardados exitosamente en el archivo Excel: {ruta_archivo}")
         print(f"Tiempo total para guardar en Excel: {tiempo_total:.2f} segundos a las {hora_formateada}")
 
@@ -186,7 +223,7 @@ def guardar_en_excel(archivos, nombre_archivo, ip_servidor, ruta_servidor, nombr
             "Hora Final": hora_formateada,
             "Duración": f"{tiempo_total:.2f} segundos"
         })
-        
+
     except PermissionError as e:
         print(f"Error de permisos al guardar el archivo: {ruta_archivo} - {e}")
         # Agregar a la lista global que el análisis no se completó
@@ -238,7 +275,31 @@ def establecer_conexion(host, username, use_private_key, private_key_path=None, 
         print(f"Error inesperado al intentar conectar: {e}")
         return None
 
-def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None):
+# Función para verificar la hora límite
+def verificar_hora_limite(hora_fin, hora_final_dt, resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor, detener_event):
+    while not detener_event.is_set():
+        ahora = datetime.now()
+
+        # Comprobar si se ha alcanzado la hora límite (por defecto 5 AM)
+        if ahora >= hora_fin:
+            print("Se alcanzó la hora límite. Guardando el progreso y pausando la operación.")
+            guardar_en_excel(resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor)
+            mostrar_resumen_analisis()
+            detener_event.set()  # Detener el proceso principal
+            return
+        
+        # Comprobar si se ha alcanzado la hora final personalizada (si se proporcionó)
+        if hora_final_dt and ahora >= hora_final_dt:
+            print("Se alcanzó la hora final personalizada. Guardando el progreso y pausando la operación.")
+            guardar_en_excel(resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor)
+            mostrar_resumen_analisis()
+            detener_event.set()  # Detener el proceso principal
+            return
+        
+        # Esperar 1 segundo antes de volver a verificar
+        time.sleep(1)
+
+def iniciar_operacion_multiple(conexiones, nombre_archivo_excel,ip_servidor, ruta_servidor, hora_final=None):
     # Convertir hora_final en un objeto datetime solo si se proporciona
     if hora_final:
         hora_final_dt = datetime.combine(datetime.today(), hora_final)
@@ -257,44 +318,55 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
     if hora_inicio.time() >= hora_fin.time():
         hora_fin += timedelta(days=1)
 
+    # Lista para guardar el resumen de las operaciones
+    resumen_operacion = []
+
+    # Evento para detener el proceso cuando se alcance la hora límite
+    detener_event = threading.Event()
+
+    # Iniciar un hilo para verificar la hora límite cada minuto
+    hilo_verificacion = threading.Thread(target=verificar_hora_limite, args=(hora_fin, hora_final_dt, resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor, detener_event))
+    hilo_verificacion.start()
+
     # Comienza el ciclo de conexiones y análisis
     for conexion in conexiones:
+        if detener_event.is_set():  # Detener el proceso si se alcanzó la hora límite
+            break
+
         host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo, passphrase = conexion
         ssh_client = establecer_conexion(host, username, use_private_key, private_key_path, password, port, passphrase)
         if ssh_client:
             try:
                 sftp_client = ssh_client.open_sftp()
                 for carpeta, nombre_hoja_nueva, es_red_compartida in rutas:
-
-                    ahora = datetime.now()
-
-                    # Comprobar si se ha alcanzado la hora límite (por defecto 5 AM)
-                    if ahora >= hora_fin:
-                        print("Se alcanzó la hora límite. Pausando la operación.")
-                        break  # Pausar o salir del ciclo
-                    
-                    # Comprobar si se ha alcanzado la hora final personalizada (si se proporcionó)
-                    if hora_final_dt and ahora >= hora_final_dt:
-                        print("Se alcanzó la hora final. Pausando la operación.")
+                    if detener_event.is_set():  # Detener el proceso si se alcanzó la hora límite
                         break
 
                     # Operaciones de listar archivos según el sistema operativo
                     if es_red_compartida:
                         if sistema_operativo == "windows":
-                            archivos = listar_archivos_remotos_windows_red_compartida(carpeta)
+                            archivos = listar_archivos_remotos_windows_red_compartida(carpeta, detener_event)
                         else:
                             print("Las carpetas de red compartidas no son compatibles con sistemas operativos que no sean Windows.")
                             continue
                     else:
                         if sistema_operativo == "linux":
-                            archivos = listar_archivos_remotos_linux(sftp_client, carpeta)
+                            archivos = listar_archivos_remotos_linux(sftp_client, carpeta, detener_event)
                         elif sistema_operativo == "windows":
-                            archivos = listar_archivos_remotos_windows(sftp_client, carpeta)
+                            archivos = listar_archivos_remotos_windows(sftp_client, carpeta, detener_event)
                         else:
                             print("Sistema operativo no soportado.")
                             continue
                     
                     if archivos:
+                        # Guardar datos de la operación en el resumen
+                        resumen_operacion.append({
+                            "host": host,
+                            "carpeta": carpeta,
+                            "archivos": archivos,
+                            "hoja": nombre_hoja_nueva,
+                            "hora_completado": datetime.now().strftime('%H:%M:%S')
+                        })
                         guardar_en_excel(archivos, nombre_archivo_excel, host, carpeta, nombre_hoja_nueva)
                         print(f"Datos guardados exitosamente en la hoja '{nombre_hoja_nueva}' en {nombre_archivo_excel}.")
                     else:
@@ -305,8 +377,15 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None
                 ssh_client.close()
         else:
             print(f"No se pudo establecer la conexión SSH con {host}.")
+    
+    # Asegurarse de que el hilo de verificación de hora se cierre correctamente
+    detener_event.set()
+    hilo_verificacion.join()
 
+    # Al finalizar todas las conexiones, mostrar el resumen
+    mostrar_resumen_analisis()
 
+#Ejecucion hora_inicio
 def esperar_hasta_hora_objetivo(hora_objetivo):
     ahora = datetime.now()
     objetivo = ahora.replace(hour=hora_objetivo.hour, minute=hora_objetivo.minute, second=0, microsecond=0)
@@ -317,10 +396,6 @@ def esperar_hasta_hora_objetivo(hora_objetivo):
     tiempo_espera = (objetivo - ahora).total_seconds()
     print(f"Esperando {tiempo_espera / 60:.2f} minutos para ejecutar la tarea a las {objetivo.time()}.")
     time.sleep(tiempo_espera)
-
-import os
-import openpyxl  # Importa openpyxl para trabajar con archivos Excel
-from datetime import datetime
 
 def main():
     def obtener_entrada_opcion(prompt, opciones_validas):
@@ -379,6 +454,10 @@ def main():
         rutas = []
         nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
 
+        # Asegurar que el nombre del archivo tenga la extensión .xlsx
+        if not nombre_archivo_excel.endswith(".xlsx"):
+            nombre_archivo_excel += ".xlsx"
+
         while True:
             if os.path.exists(nombre_archivo_excel):
                 try:
@@ -388,7 +467,8 @@ def main():
                     break
                 except Exception as e:
                     # Si falla al cargar, preguntamos si desea crear uno nuevo o intentar otro
-                    respuesta = obtener_entrada_opcion("El archivo no existe. ¿Desea crear uno nuevo? (s/n): ", ['s', 'n'])
+                    print(f"No se pudo cargar el archivo '{nombre_archivo_excel}'. Error: {e}")
+                    respuesta = obtener_entrada_opcion("¿Desea crear uno nuevo? (s/n): ", ['s', 'n'])
                     if respuesta == 's':
                         workbook = openpyxl.Workbook()  # Crear un nuevo archivo Excel
                         workbook.save(nombre_archivo_excel)  # Guardar el nuevo archivo
@@ -397,6 +477,8 @@ def main():
                     else:
                         # Preguntar por un nuevo nombre de archivo
                         nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+                        if not nombre_archivo_excel.endswith(".xlsx"):
+                            nombre_archivo_excel += ".xlsx"
             else:
                 # Si no existe, preguntar si desea crearlo
                 print(f"El archivo '{nombre_archivo_excel}' no existe.")
@@ -409,6 +491,8 @@ def main():
                 else:
                     # Preguntar por un nuevo nombre de archivo
                     nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
+                    if not nombre_archivo_excel.endswith(".xlsx"):
+                        nombre_archivo_excel += ".xlsx"
 
         nombres_hojas = set(workbook.sheetnames)
 
@@ -441,8 +525,13 @@ def main():
     opcion = obtener_entrada_opcion("¿Desea ejecutar la operación ahora (1) o en una hora específica (2)? Ingrese 1 o 2: ", ['1', '2'])
     
     if opcion == '1':
-        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=None)
-    
+        for conexion in conexiones:
+            ip_servidor = conexion[0]  # El valor 'host' es ip_servidor
+            rutas = conexion[6]  # Rutas es una lista de tuplas
+            for ruta in rutas:
+                ruta_servidor = ruta[0]  # El primer elemento de cada tupla en rutas es 'carpeta'
+                iniciar_operacion_multiple([conexion], nombre_archivo_excel, ip_servidor, ruta_servidor, hora_final=None)
+
     elif opcion == '2':
         hora_inicio = obtener_entrada_hora("Ingrese la hora de inicio en formato HH:MM (por ejemplo, 22:00): ")
         print(f"Hora de inicio establecida a las {hora_inicio}.")
@@ -455,7 +544,13 @@ def main():
             hora_final = None
 
         esperar_hasta_hora_objetivo(hora_inicio)
-        iniciar_operacion_multiple(conexiones, nombre_archivo_excel, hora_final=hora_final)
+
+        for conexion in conexiones:
+            ip_servidor = conexion[0]  # El valor 'host' es ip_servidor
+            rutas = conexion[6]  # Rutas es una lista de tuplas
+            for ruta in rutas:
+                ruta_servidor = ruta[0]  # El primer elemento de cada tupla en rutas es 'carpeta'
+                iniciar_operacion_multiple([conexion], nombre_archivo_excel, ip_servidor, ruta_servidor, hora_final=hora_final)
     
     else:
         print("Opción no válida. Por favor, ingrese 1 o 2.")
