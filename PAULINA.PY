@@ -286,7 +286,7 @@ def verificar_hora_limite(hora_fin, hora_final_dt, resumen_operacion, nombre_arc
                 guardar_en_excel(resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor)
             except Exception as e:
                 print(f"Error al guardar en Excel: {e}")
-            detener_event.set()  # Asegúrate de detener el proceso principal
+            detener_event.set()
             return
         
         # Verificar si se ha alcanzado la hora final personalizada
@@ -296,7 +296,7 @@ def verificar_hora_limite(hora_fin, hora_final_dt, resumen_operacion, nombre_arc
                 guardar_en_excel(resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor)
             except Exception as e:
                 print(f"Error al guardar en Excel: {e}")
-            detener_event.set()  # Asegúrate de detener el proceso principal
+            detener_event.set()
             return
 
         time.sleep(1)  # Reducir el tiempo de espera a 1 segundo
@@ -339,7 +339,7 @@ def iniciar_operacion_multiple(conexiones, nombre_archivo_excel, ip_servidor, ru
                     if detener_event.is_set():
                         break
                     
-                    # Verificar si ya se procesó esta ruta para evitar repeticiones
+                    
                     if (host, carpeta) in rutas_analizadas:
                         print(f"La ruta {carpeta} ya fue analizada en {host}.")
                         continue
@@ -453,7 +453,7 @@ def main():
 
         rutas = []
 
-        # Pedir el nombre del archivo Excel primero
+        #Pedir nombre excel
         nombre_archivo_excel = input("Ingrese el nombre del archivo Excel (deje vacío para 'Bitacora.xlsx'): ") or "Bitacora.xlsx"
         
         # Asegurar que el nombre del archivo tenga la extensión .xlsx
@@ -496,7 +496,7 @@ def main():
 
         nombres_hojas = set(workbook.sheetnames)
 
-        # Ahora pedimos el nombre de la hoja antes que la ruta
+        #Nombre de la hoja
         while True:
             nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese el nombre de la hoja: ")
 
@@ -512,7 +512,7 @@ def main():
 
             nombres_hojas.add(nombre_hoja_nueva)
 
-            # Ahora pedimos la ruta
+            # Ruta de la carpeta
             carpeta = obtener_entrada_no_vacia("Ingrese la ruta remota a analizar: ")
 
             es_red_compartida = obtener_entrada_opcion("¿Es esta una carpeta de red compartida? (s/n): ", ['s', 'n']) == 's'
@@ -534,7 +534,7 @@ def main():
             ip_servidor = conexion[0]  # El valor 'host' es ip_servidor
             rutas = conexion[6]  # Rutas es una lista de tuplas
             for ruta in rutas:
-                ruta_servidor = ruta[0]  # El primer elemento de cada tupla en rutas es 'carpeta'
+                ruta_servidor = ruta[0]
                 iniciar_operacion_multiple([conexion], nombre_archivo_excel, ip_servidor, ruta_servidor, hora_final=None)
 
     elif opcion == '2':
