@@ -249,7 +249,6 @@ def guardar_en_excel(archivos, nombre_archivo, ip_servidor, ruta_servidor, respo
     # Guardar los datos en la hoja, asegurándose de que los nuevos campos se añaden correctamente
     for id_archivo, archivo in enumerate(archivos, start=1):
         if archivo:  # Verificar si 'archivo' no está vacío
-            # Asegurarse de que las fechas se convierten en texto usando strftime si son objetos datetime
             nombre_archivo = archivo[0]
             formato = archivo[1]
             fecha_creacion = archivo[2].strftime('%Y-%m-%d %H:%M:%S') if isinstance(archivo[2], datetime) else archivo[2]
@@ -287,13 +286,9 @@ def guardar_en_excel(archivos, nombre_archivo, ip_servidor, ruta_servidor, respo
 
         print(f"Datos guardados exitosamente en el archivo Excel: {ruta_archivo}")
         print(f"Tiempo total para guardar en Excel: {tiempo_total_guardado:.2f} segundos a las {hora_formateada}")
-
-        # Nota: Ya no se añade el resumen aquí. 
-        # Solo guardamos los datos en Excel y dejamos que 'iniciar_operacion_multiple' maneje la actualización del resumen.
         
     except PermissionError as e:
         print(f"Error de permisos al guardar el archivo: {ruta_archivo} - {e}")
-        # No se añade al resumen, ya que la lógica de actualización del resumen está en iniciar_operacion_multiple.
 
 def verificar_hora_limite(hora_fin, hora_final_dt, resumen_operacion, nombre_archivo_excel, ip_servidor, ruta_servidor, detener_event):
     while not detener_event.is_set():
@@ -556,7 +551,7 @@ def main():
 
         nombres_hojas = set(workbook.sheetnames)
 
-        # Ahora pedimos el nombre de la hoja antes que la ruta
+        # Pedir nombre de la hoja
         while True:
             nombre_hoja_nueva = obtener_entrada_no_vacia("Ingrese el nombre de la hoja: ")
 
@@ -572,14 +567,14 @@ def main():
 
             nombres_hojas.add(nombre_hoja_nueva)
 
-            # Nuevas preguntas para responsables y acceso
+            # Preguntas para responsables y acceso
             responsable_dato = input("Responsable de los datos / archivos (deje vacío si no aplica): ").strip()
             acceso_archivo = input("¿Quién tiene acceso a los archivos / datos? (deje vacío si no aplica): ").strip()
             responsable_respaldo = input("Responsable de respaldo (deje vacío si no aplica): ").strip()
             responsable_eliminacion = input("Responsable de eliminación (deje vacío si no aplica): ").strip()
             fecha_eliminacion = input("Fecha de eliminación (deje vacío si no aplica, por defecto será '72 meses'): ").strip() or "72 meses"
             
-            # Ahora pedimos la ruta
+            # Pedir ruta
             carpeta = obtener_entrada_no_vacia("Ingrese la ruta remota a analizar: ")
 
             es_red_compartida = obtener_entrada_opcion("¿Es esta una carpeta de red compartida? (s/n): ", ['s', 'n']) == 's'
@@ -590,12 +585,12 @@ def main():
         
         conexiones.append((host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo, passphrase))
 
-        # Imprimir detalles de conexión
-        print("\nConexión agregada:")
-        print(f"Host: {host}, Usuario: {username}, Uso de clave privada: {use_private_key}, Puerto: {port}, Sistema operativo: {sistema_operativo}")
-        print("Rutas a analizar:")
-        for ruta in rutas:
-            print(f"  Ruta: {ruta[0]}, Hoja: {ruta[1]}, Es red compartida: {ruta[2]}, Responsable: {ruta[3]}, Acceso: {ruta[4]}, Responsable respaldo: {ruta[5]}, Responsable eliminación: {ruta[6]}, Fecha de eliminación: {ruta[7]}")
+        # Imprimir detalles de conexión para depurar
+        #print("\nConexión agregada:")
+        #print(f"Host: {host}, Usuario: {username}, Uso de clave privada: {use_private_key}, Puerto: {port}, Sistema operativo: {sistema_operativo}")
+        #print("Rutas a analizar:")
+        #for ruta in rutas:
+        #    print(f"  Ruta: {ruta[0]}, Hoja: {ruta[1]}, Es red compartida: {ruta[2]}, Responsable: {ruta[3]}, Acceso: {ruta[4]}, Responsable respaldo: {ruta[5]}, Responsable eliminación: {ruta[6]}, Fecha de eliminación: {ruta[7]}")
         
         otro_servidor = obtener_entrada_opcion("¿Desea agregar otro servidor a analizar? (s/n): ", ['s', 'n'])
         if otro_servidor != 's':
@@ -606,7 +601,7 @@ def main():
     
     if opcion == '1':
         for conexion in conexiones:
-            # Asegúrate de que coincidan las posiciones de las variables
+            # Verificar de que coincidan las posiciones de las variables
             host, username, use_private_key, private_key_path, password, port, rutas, sistema_operativo, passphrase = conexion
             ip_servidor = host  # El valor 'host' es ip_servidor
             iniciar_operacion_multiple(conexion, nombre_archivo_excel, ip_servidor, rutas, hora_final=None)
