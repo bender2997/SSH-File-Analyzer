@@ -10,7 +10,7 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
 
-# Lista global para almacenar el resumen del análisis de cada servidor
+# Lista global para almacenar el resumen del análisis de cada servidor.
 resumen_analisis_servidores = []
 
 def listar_archivos_remotos_linux(sftp_client, carpeta, detener_event):
